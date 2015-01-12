@@ -1,29 +1,29 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 module Replay where
 
-import qualified Data.Aeson.Types as Aeson
-import           Data.Aeson (FromJSON, ToJSON)
-
 import Control.Applicative
-import Control.Monad (liftM, MonadPlus(..), ap, join)
+import Control.Monad
 import Control.Monad.Trans.Class
 import Control.Monad.IO.Class
--- import Control.Monad.Reader.Class
--- import Control.Monad.Writer.Class
--- import Control.Monad.State.Class
--- import Control.Monad.Error.Class
--- import Control.Monad.Cont.Class
--- import Data.Functor.Bind hiding (join)
 import Data.Monoid
 import Data.Foldable
 import Data.Functor.Identity
--- import Data.Traversable
 import Data.Bifunctor
 import Data.Bifoldable
 import Data.Bitraversable
 import Data.Data
 
-import Control.Monad.Trans.Reader (Reader, runReader, ask)
+{- Instances for the following types may be possible.
+import Control.Monad.Reader.Class
+import Control.Monad.Writer.Class
+import Control.Monad.State.Class
+import Control.Monad.Error.Class
+import Control.Monad.Cont.Class
+import Data.Functor.Bind -}
+
+{- I don't think Traversable is possible. See below.
+import Data.Traversable -}
+
 
 data RF x f a b = Pure a | LiftR (x -> b) (f x)
   deriving (Typeable)
@@ -54,72 +54,88 @@ instance Foldable f => Bifoldable (RF x f) where
   bifoldMap _ g (LiftR k as) = foldMap (g . k) as
   {-# INLINE bifoldMap #-}
 
-newtype RT x m n a = RT { runRT :: n (RF x m a (RT x m n a)) }
+newtype ReplayT x m n a = ReplayT { runReplayT :: n (RF x m a (ReplayT x m n a)) }
 
-instance (Functor f, Monad m) => Functor (RT x f m) where
-  fmap f (RT m) = RT (liftM f' m) where
+instance (Functor f, Monad m) => Functor (ReplayT x f m) where
+  fmap f (ReplayT m) = ReplayT (liftM f' m) where
     f' (Pure a)  = Pure (f a)
     f' (LiftR g bs) = LiftR (fmap f . g) bs
   {-# INLINE fmap #-}
 
-instance (Functor f, Monad m) => Applicative (RT x f m) where
-  pure a = RT (return (Pure a))
+instance (Functor f, Monad m) => Applicative (ReplayT x f m) where
+  pure a = ReplayT (return (Pure a))
   {-# INLINE pure #-}
   (<*>) = ap
   {-# INLINE (<*>) #-}
   
-instance (Functor f, Monad m) => Monad (RT x f m) where
-  return a = RT (return (Pure a))
+instance (Functor f, Monad m) => Monad (ReplayT x f m) where
+  return a = ReplayT (return (Pure a))
   {-# INLINE return #-}
-  RT m >>= f = RT $ m >>= \v -> case v of
-    Pure a -> runRT (f a)
+  ReplayT m >>= f = ReplayT $ m >>= \v -> case v of
+    Pure a -> runReplayT (f a)
     LiftR g w -> return (LiftR (fmap (>>= f) g) w )
 
-instance MonadTrans (RT x f) where
-  lift = RT . liftM Pure
+instance MonadTrans (ReplayT x f) where
+  lift = ReplayT . liftM Pure
   {-# INLINE lift #-}
 
-instance (Functor f, MonadIO m) => MonadIO (RT x f m) where
+instance (Functor f, MonadIO m) => MonadIO (ReplayT x f m) where
   liftIO = lift . liftIO
   {-# INLINE liftIO #-}
 
-stepRT :: (Functor m, Functor n, Monad m, Monad n) 
+-- | Replay an effect log and then perform at most one layer of computation in 'm'.
+-- 
+-- In this example, the replayable monad is '(->) String', i.e. the reader monad.
+--
+-- >>> let m = (record (id :: String -> String) >>= lift . putStrLn)
+-- >>> :t m
+-- m :: ReplayT String ((->) String) IO ()
+-- >> 
+-- >>> let layer0 = replay [] m
+-- >>> :t layer0
+-- layer0 :: IO (Either () (String -> [String]))
+-- >>> Right effect1 <- layer0
+-- >>> :t effect1
+-- effect0 :: (String -> [String])
+-- >>> let log0 = effect0 "First input"
+-- >>> log0
+-- ["Input 1"]
+-- >>> let layer1 = replay log0 m
+-- >>> r <- layer1
+-- Input 1
+-- >>> :force r
+-- r = Left ()
+replay :: (Functor m, Functor n, Monad m, Monad n) 
        => [x] 
-       -> RT x m n a 
+       -> ReplayT x m n a 
        -> n (Either a (m [x]))
-stepRT l (RT n) = do
+replay l (ReplayT n) = do
   val <- n
   case val of
     Pure x -> return $ Left x
     LiftR g x -> case l of
-      (v : vs) -> (fmap . fmap . fmap) (v :) $ stepRT vs (g v)
+      (v : vs) -> (fmap . fmap . fmap) (v :) $ replay vs (g v)
       [] -> return . Right $ (: []) <$> x
-  
-iterT :: (Functor f, Monad m) => (f (m a) -> m a) -> [x] -> RT x f m a -> m a
-iterT f l (RT m) = do
+
+-- | Replay an effect log, and then tear down the rest of the monad using iteration.
+--
+-- This function is analogous to 'iterT' from 'Control.Monad.Trans.Free'. When an empty
+-- log is provided, it should be equivalent to 'iterT'.
+replayAndContinue :: (Functor f, Monad m) => (f (m a) -> m a) -> [x] -> ReplayT x f m a -> m a
+replayAndContinue f l (ReplayT m) = do
     val <- m
     case val of
       LiftR g _ -> 
         case l of
-          (v : vs) -> iterT f vs (g v)
+          (v : vs) -> replayAndContinue f vs (g v)
           [] -> go l val
       _ -> go l val
   where
     go l v = 
-      case fmap (iterT f l) v of
+      case fmap (replayAndContinue f l) v of
         Pure x -> return x
         LiftR g x -> f (fmap g x)
 
-liftR :: (Monad m, Functor f) => f x -> RT x f m x
-liftR f = RT . return $ LiftR return f
-
-liftR' :: (Monad m, Functor f, FromJSON x, ToJSON x) => f x -> RT Aeson.Value f m (Maybe x)
-liftR' f = fmap (Aeson.parseMaybe Aeson.parseJSON) . liftR $ (fmap Aeson.toJSON f)
-
-test :: Monad m => RT Aeson.Value (Reader Bool) m Bool
-test = do
-  Just i <- liftR' ask
-  if i then do
-         Just i' <- liftR' ask
-         return $ not i'
-       else return True
+-- | Create a recorded effect.
+record :: (Monad m, Functor f) => f x -> ReplayT x f m x
+record f = ReplayT . return $ LiftR return f
