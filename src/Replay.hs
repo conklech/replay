@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 module Replay where
 
@@ -26,7 +27,11 @@ import Data.Traversable -}
 
 
 data RF x f a b = Pure a | LiftR (x -> b) (f x)
-  deriving (Typeable)
+  deriving (
+#if __GLASGOW_HASKELL__ >= 707
+           Typeable
+#endif
+           )
 
 instance Functor f => Functor (RF x f a) where
   fmap _ (Pure a) = Pure a
