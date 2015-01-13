@@ -91,23 +91,24 @@ instance (Functor f, MonadIO m) => MonadIO (ReplayT x f m) where
 -- | Replay an effect log and then perform at most one layer of computation in 'm'.
 -- 
 -- In this example, the replayable monad is '(->) String', i.e. the reader monad.
+-- The underlying monad is 'IO'. Using 'IO' doesn't actually make any sense;
+-- the idea is that the underlying monad has sane behavior under repetitoin
 --
 -- >>> let m = (record (id :: String -> String) >>= lift . putStrLn)
 -- >>> :t m
 -- m :: ReplayT String ((->) String) IO ()
--- >> 
 -- >>> let layer0 = replay [] m
 -- >>> :t layer0
 -- layer0 :: IO (Either () (String -> [String]))
--- >>> Right effect1 <- layer0
--- >>> :t effect1
--- effect0 :: (String -> [String])
+-- >>> Right effect0 <- layer0
+-- >>> :t effect0
+-- effect0 :: String -> [String]
 -- >>> let log0 = effect0 "First input"
 -- >>> log0
--- ["Input 1"]
+-- ["First input"]
 -- >>> let layer1 = replay log0 m
 -- >>> r <- layer1
--- Input 1
+-- First input
 -- >>> :force r
 -- r = Left ()
 replay :: (Functor m, Functor n, Monad m, Monad n) 
