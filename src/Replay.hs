@@ -111,10 +111,10 @@ instance (Functor f, MonadIO m) => MonadIO (ReplayT x f m) where
 -- First input
 -- >>> :force r
 -- r = Left ()
-replay :: (Functor m, Functor n, Monad m, Monad n) 
+replay :: (Functor f, Functor m, Monad m)
        => [x] 
-       -> ReplayT x m n a 
-       -> n (Either a (m [x]))
+       -> ReplayT x f m a 
+       -> m (Either a (f [x]))
 replay l (ReplayT n) = do
   val <- n
   case val of
