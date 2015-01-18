@@ -14,7 +14,7 @@ import Data.Bifoldable
 import Data.Bitraversable
 import Data.Data
 
-{- Instances for the following types may be possible.
+{- Instances for the following classes may be possible.
 import Control.Monad.Reader.Class
 import Control.Monad.Writer.Class
 import Control.Monad.State.Class
@@ -22,7 +22,7 @@ import Control.Monad.Error.Class
 import Control.Monad.Cont.Class
 import Data.Functor.Bind -}
 
-{- I don't think Traversable is possible. See below.
+{- I don't think Traversable is possible.
 import Data.Traversable -}
 
 
@@ -59,7 +59,7 @@ instance Foldable f => Bifoldable (RF x f) where
   bifoldMap _ g (LiftR k as) = foldMap (g . k) as
   {-# INLINE bifoldMap #-}
 
-newtype ReplayT x m n a = ReplayT { runReplayT :: n (RF x m a (ReplayT x m n a)) }
+newtype ReplayT x f m a = ReplayT { runReplayT :: m (RF x f a (ReplayT x f m a)) }
 
 instance (Functor f, Monad m) => Functor (ReplayT x f m) where
   fmap f (ReplayT m) = ReplayT (liftM f' m) where
