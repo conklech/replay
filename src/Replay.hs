@@ -92,7 +92,7 @@ instance (Functor f, MonadIO m) => MonadIO (ReplayT x f m) where
 -- 
 -- In this example, the replayable monad is '(->) String', i.e. the reader monad.
 -- The underlying monad is 'IO'. Using 'IO' doesn't actually make any sense;
--- the idea is that the underlying monad has sane behavior under repetitoin
+-- the idea is that the underlying monad has sane behavior under repetition
 --
 -- >>> let m = (record (id :: String -> String) >>= lift . putStrLn)
 -- >>> :t m
@@ -143,5 +143,5 @@ replayAndContinue f l (ReplayT m) = do
         LiftR g x -> f (fmap g x)
 
 -- | Create a recorded effect.
-record :: (Monad m, Functor f) => f x -> ReplayT x f m x
+record :: (Functor f, Monad m) => f x -> ReplayT x f m x
 record f = ReplayT . return $ LiftR return f
